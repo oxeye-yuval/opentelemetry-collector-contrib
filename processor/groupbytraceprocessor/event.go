@@ -69,6 +69,12 @@ type tracesWithID struct {
 	td ptrace.Traces
 }
 
+type SomeStruct struct {
+	trace      []ptrace.ResourceSpans
+	tid        pcommon.TraceID
+	shouldSend bool
+}
+
 // eventMachine is a machine that accepts events in a typically non-blocking manner,
 // processing the events serially per worker scope, to ensure that data at the consumer is consistent.
 // Just like the machine itself is non-blocking, consumers are expected to also not block
@@ -84,7 +90,7 @@ type eventMachine struct {
 
 	onTraceReceived func(td tracesWithID, worker *eventMachineWorker) error
 	onTraceExpired  func(traceID pcommon.TraceID, worker *eventMachineWorker) error
-	onTraceReleased func(rss []ptrace.ResourceSpans) error
+	onTraceReleased func(rss []ptrace.ResourceSpans, traceID pcommon.TraceID, shouldSend bool) error
 	onTraceRemoved  func(traceID pcommon.TraceID) error
 
 	onError func(event)
@@ -189,7 +195,8 @@ func (em *eventMachine) handleEvent(e event, w *eventMachineWorker) {
 			em.callOnError(e)
 			return
 		}
-		payload, ok := e.payload.([]ptrace.ResourceSpans)
+		// payload, ok := e.payload.([]ptrace.ResourceSpans)
+		payload, ok := e.payload.(SomeStruct)
 		if !ok {
 			// the payload had an unexpected type!
 			em.callOnError(e)
@@ -197,7 +204,7 @@ func (em *eventMachine) handleEvent(e event, w *eventMachineWorker) {
 		}
 
 		em.handleEventWithObservability("onTraceReleased", func() error {
-			return em.onTraceReleased(payload)
+			return em.onTraceReleased(payload.trace, payload.tid, payload.shouldSend)
 		})
 	case traceRemoved:
 		if em.onTraceRemoved == nil {

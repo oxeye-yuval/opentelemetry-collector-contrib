@@ -19,6 +19,7 @@ import (
 	"compress/zlib"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net"
@@ -141,6 +142,8 @@ func (zr *zipkinReceiver) v2ToTraceSpans(blob []byte, hdr http.Header) (reqs ptr
 		}
 	}
 
+	b := string(blob)
+	fmt.Println(b)
 	return unmarshaler.UnmarshalTraces(blob)
 }
 
