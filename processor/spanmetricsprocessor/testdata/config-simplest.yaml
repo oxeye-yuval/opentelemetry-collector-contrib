@@ -51,7 +51,7 @@ service:
       address: ":8888"
   pipelines:
     traces:
-      receivers: [zipkin]
+      receivers: [otlp]
       # spanmetrics will pass on span data untouched to next processor
       # while also accumulating metrics to be sent to the configured 'prometheus' exporter.
       processors: [groupbytrace/2]

@@ -23,6 +23,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/bluele/gcache"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/batchpersignal"
 	"go.opencensus.io/stats"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
@@ -30,8 +32,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/batchpersignal"
 )
 
 type UInt64Set map[uint64]struct{}
@@ -52,7 +52,7 @@ type groupByTraceProcessor struct {
 	nextConsumer consumer.Traces
 	config       Config
 	logger       *zap.Logger
-	traceUIDs    UInt64Set
+	traceUIDs    gcache.Cache
 	// the event machine handling all operations for this processor
 	eventMachine *eventMachine
 
@@ -67,9 +67,9 @@ const bufferSize = 10_000
 // newGroupByTraceProcessor returns a new processor.
 func newGroupByTraceProcessor(logger *zap.Logger, st storage, nextConsumer consumer.Traces, config Config) *groupByTraceProcessor {
 	// the event machine will buffer up to N concurrent events before blocking
-	eventMachine := newEventMachine(logger, 10000, config.NumWorkers, config.NumTraces)
+	eventMachine := newEventMachine(logger, bufferSize, config.NumWorkers, config.NumTraces)
 
-	traceUIDs := make(map[uint64]struct{})
+	traceUIDs := gcache.New(bufferSize).LRU().Build()
 	sp := &groupByTraceProcessor{
 		logger:       logger,
 		nextConsumer: nextConsumer,
@@ -293,13 +293,14 @@ func (sp *groupByTraceProcessor) isDuplicate(trace ptrace.Traces) bool {
 	h.Write(uid)
 	trace_uid := h.Sum64()
 
-	if _, ok := sp.traceUIDs[trace_uid]; ok {
+	_, err := sp.traceUIDs.Get(trace_uid)
+	if err == nil {
 		stats.Record(context.Background(), mDeDuplicatedTraces.M(1))
 		return true
 	}
 
 	stats.Record(context.Background(), mNumOfDistinctTraces.M(1))
-	sp.traceUIDs[trace_uid] = struct{}{}
+	sp.traceUIDs.SetWithExpire(trace_uid, struct{}{}, time.Second*10)
 	return false
 }
 
