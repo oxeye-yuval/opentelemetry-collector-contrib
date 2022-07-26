@@ -39,7 +39,7 @@ processors:
   #   metrics_exporter: prometheus
   groupbytrace:
   groupbytrace/2:
-    deduplication_timeout: 60
+    deduplication_timeout: 10s
     wait_duration: 10s
     num_traces: 20000
 

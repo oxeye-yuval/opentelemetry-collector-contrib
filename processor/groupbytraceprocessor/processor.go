@@ -301,7 +301,7 @@ func (sp *groupByTraceProcessor) isDuplicate(trace ptrace.Traces) bool {
 	}
 
 	stats.Record(context.Background(), mNumOfDistinctTraces.M(1))
-	sp.traceUIDs.SetWithExpire(trace_uid, struct{}{}, time.Second*sp.config.DeduplicationTimeout)
+	sp.traceUIDs.SetWithExpire(trace_uid, struct{}{}, sp.config.DeduplicationTimeout)
 	return false
 }
 
