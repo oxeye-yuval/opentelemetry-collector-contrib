@@ -32,6 +32,10 @@ type Config struct {
 	// Default: 1.
 	NumWorkers int `mapstructure:"num_workers"`
 
+	// Deduplicated trace timeout in seconds
+	// Default: 60
+	DeduplicationTimeout time.Duration `mapstructure:"deduplication_timeout"`
+
 	// WaitDuration tells the processor to wait for the specified duration for the trace to be complete.
 	// Default: 1s.
 	WaitDuration time.Duration `mapstructure:"wait_duration"`

@@ -105,6 +105,7 @@ func (sp *groupByTraceProcessor) Start(context.Context, component.Host) error {
 	// start these metrics, as it might take a while for them to receive their first event
 	stats.Record(context.Background(), mTracesEvicted.M(0))
 	stats.Record(context.Background(), mDeDuplicatedTraces.M(0))
+	stats.Record(context.Background(), mBypassedTraces.M(0))
 	stats.Record(context.Background(), mNumOfDistinctTraces.M(0))
 	stats.Record(context.Background(), mIncompleteReleases.M(0))
 	stats.Record(context.Background(), mNumTracesConf.M(int64(sp.config.NumTraces)))
@@ -300,7 +301,7 @@ func (sp *groupByTraceProcessor) isDuplicate(trace ptrace.Traces) bool {
 	}
 
 	stats.Record(context.Background(), mNumOfDistinctTraces.M(1))
-	sp.traceUIDs.SetWithExpire(trace_uid, struct{}{}, time.Second*10)
+	sp.traceUIDs.SetWithExpire(trace_uid, struct{}{}, time.Second*sp.config.DeduplicationTimeout)
 	return false
 }
 
@@ -315,6 +316,10 @@ func (sp *groupByTraceProcessor) onTraceReleased(rss []ptrace.ResourceSpans, tra
 		mReleasedSpans.M(int64(trace.SpanCount())),
 		mReleasedTraces.M(1),
 	)
+
+	if shouldSend {
+		stats.Record(context.Background(), mBypassedTraces.M(1))
+	}
 
 	if shouldSend || !sp.isDuplicate(trace) {
 		// Do async consuming not to block event worker
