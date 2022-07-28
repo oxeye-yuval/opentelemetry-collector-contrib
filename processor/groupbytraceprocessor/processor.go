@@ -224,6 +224,18 @@ func (sp *groupByTraceProcessor) markAsReleased(traceID pcommon.TraceID, fire fu
 	return nil
 }
 
+func extractField(fieldName string, resouceAttribute pcommon.Map, spanAttributes pcommon.Map) *string {
+	fieldValue, ok := resouceAttribute.Get(fieldName)
+	if !ok {
+		fieldValue, ok = spanAttributes.Get(fieldName)
+		if !ok {
+			return nil
+		}
+	}
+	val := fieldValue.StringVal()
+	return &val
+}
+
 func (sp *groupByTraceProcessor) generateTraceUID(trace ptrace.Traces) ([]uint64, bool) {
 	vss := trace.ResourceSpans()
 	trace_uids := make([]uint64, trace.SpanCount())
@@ -234,40 +246,67 @@ func (sp *groupByTraceProcessor) generateTraceUID(trace ptrace.Traces) ([]uint64
 		for j := 0; j < ilss.Len(); j++ {
 			for g := 0; g < ilss.At(j).Spans().Len(); g++ {
 				operation := ilss.At(j).Spans().At(g).Name()
-				// var image_name internal.Value
-				image_name, ok := rs.Resource().Attributes().Get("oxeye.image_name")
-				if !ok {
-					image_name, ok = ilss.At(j).Spans().At(g).Attributes().Get("oxeye.image_name")
-					if !ok {
-						return nil, false
-					}
-				}
 
-				// namespace, ok := rs.Resource().Attributes().Get("oxeye.container_namespace")
-				// namespace, ok := ilss.At(j).Spans().At(g).Attributes().Get("oxeye.container_namespace")
-				if !ok {
+				resource_attributes := rs.Resource().Attributes()
+				span_attributes := ilss.At(j).Spans().At(g).Attributes()
+
+				image_name := extractField(
+					"oxeye.image_name",
+					resource_attributes,
+					span_attributes,
+				)
+
+				if image_name == nil {
+					// We would want to metric this
 					return nil, false
 				}
 
-				// observer_id, ok := rs.Resource().Attributes().Get("oxeye.observer_id")
-				// observer_id, ok := ilss.At(j).Spans().At(g).Attributes().Get("oxeye.observer_id")
-				if !ok {
+				namespace := extractField(
+					"oxeye.container_namespace",
+					resource_attributes,
+					span_attributes,
+				)
+
+				if namespace == nil {
 					return nil, false
 				}
 
-				// account_id, ok := rs.Resource().Attributes().Get("oxeye.customer_id")
-				// account_id, ok := ilss.At(j).Spans().At(g).Attributes().Get("oxeye.customer_id")
-				if !ok {
+				observer_id := extractField(
+					"oxeye.observer_id",
+					resource_attributes,
+					span_attributes,
+				)
+
+				if observer_id == nil {
 					return nil, false
 				}
+
+				account_id := extractField(
+					"oxeye.customer_id",
+					resource_attributes,
+					span_attributes,
+				)
+
+				if account_id == nil {
+					return nil, false
+				}
+
+				call_stack := extractField(
+					"oxeye.call_stack",
+					resource_attributes,
+					span_attributes,
+				)
 
 				h := fnv.New64a()
 				h.Write([]byte(operation))
 
-				h.Write([]byte(image_name.StringVal()))
-				// h.Write([]byte(namespace.StringVal()))
-				// h.Write([]byte(account_id.StringVal()))
-				// h.Write([]byte(observer_id.StringVal()))
+				h.Write([]byte(*image_name))
+				h.Write([]byte(*namespace))
+				h.Write([]byte(*account_id))
+				h.Write([]byte(*observer_id))
+				if call_stack != nil {
+					h.Write([]byte(*call_stack))
+				}
 				trace_uids[span_counter] = h.Sum64()
 				span_counter++
 			}
