@@ -104,6 +104,7 @@ func (sp *groupByTraceProcessor) Capabilities() consumer.Capabilities {
 func (sp *groupByTraceProcessor) Start(context.Context, component.Host) error {
 	// start these metrics, as it might take a while for them to receive their first event
 	stats.Record(context.Background(), mTracesEvicted.M(0))
+	stats.Record(context.Background(), mFailedToHash.M(0))
 	stats.Record(context.Background(), mDeDuplicatedTraces.M(0))
 	stats.Record(context.Background(), mBypassedTraces.M(0))
 	stats.Record(context.Background(), mNumOfDistinctTraces.M(0))
@@ -246,66 +247,28 @@ func (sp *groupByTraceProcessor) generateTraceUID(trace ptrace.Traces) ([]uint64
 		for j := 0; j < ilss.Len(); j++ {
 			for g := 0; g < ilss.At(j).Spans().Len(); g++ {
 				operation := ilss.At(j).Spans().At(g).Name()
+				h := fnv.New64a()
+				h.Write([]byte(operation))
 
 				resource_attributes := rs.Resource().Attributes()
 				span_attributes := ilss.At(j).Spans().At(g).Attributes()
 
-				image_name := extractField(
-					"oxeye.image_name",
-					resource_attributes,
-					span_attributes,
-				)
+				for p := 0; p < len(sp.config.Hashfields); p++ {
+					fieldValue := extractField(
+						sp.config.Hashfields[p].Name,
+						resource_attributes,
+						span_attributes,
+					)
 
-				if image_name == nil {
-					// We would want to metric this
-					return nil, false
-				}
+					if sp.config.Hashfields[p].Required && fieldValue == nil {
+						stats.Record(context.Background(), mFailedToHash.M(1))
+						return nil, false
+					}
+					if fieldValue == nil {
+						continue
+					}
 
-				namespace := extractField(
-					"oxeye.container_namespace",
-					resource_attributes,
-					span_attributes,
-				)
-
-				if namespace == nil {
-					return nil, false
-				}
-
-				observer_id := extractField(
-					"oxeye.observer_id",
-					resource_attributes,
-					span_attributes,
-				)
-
-				if observer_id == nil {
-					return nil, false
-				}
-
-				account_id := extractField(
-					"oxeye.customer_id",
-					resource_attributes,
-					span_attributes,
-				)
-
-				if account_id == nil {
-					return nil, false
-				}
-
-				call_stack := extractField(
-					"oxeye.call_stack",
-					resource_attributes,
-					span_attributes,
-				)
-
-				h := fnv.New64a()
-				h.Write([]byte(operation))
-
-				h.Write([]byte(*image_name))
-				h.Write([]byte(*namespace))
-				h.Write([]byte(*account_id))
-				h.Write([]byte(*observer_id))
-				if call_stack != nil {
-					h.Write([]byte(*call_stack))
+					h.Write([]byte(*fieldValue))
 				}
 				trace_uids[span_counter] = h.Sum64()
 				span_counter++
@@ -318,7 +281,8 @@ func (sp *groupByTraceProcessor) generateTraceUID(trace ptrace.Traces) ([]uint64
 func (sp *groupByTraceProcessor) isDuplicate(trace ptrace.Traces) bool {
 	trace_uids, ok := sp.generateTraceUID(trace)
 	if !ok {
-		return true
+		// Consider returning error value to make it explicit
+		return false
 	}
 
 	sort.Slice(trace_uids, func(i, j int) bool { return trace_uids[i] < trace_uids[j] })

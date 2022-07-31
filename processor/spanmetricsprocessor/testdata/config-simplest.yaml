@@ -19,11 +19,22 @@ exporters:
       insecure: true
 
 processors:
+  # groupbytrace:
   groupbytrace:
-  groupbytrace/2:
     deduplication_timeout: 8760h
     wait_duration: 10s
     num_traces: 20000
+    hash_field:
+      - name: "oxeye.image_name"
+        required: true
+      - name: "oxeye.container_namespace"
+        required: true
+      - name: "oxeye.customer_id"
+        required: true
+      - name: "oxeye.observer_id"
+        required: true
+      - name: "oxeye.call_stack"
+        required: false
 
 
 service:
@@ -33,5 +44,5 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [groupbytrace/2]
+      processors: [groupbytrace]
       exporters: [jaeger]

@@ -29,9 +29,10 @@ var (
 	mReleasedSpans       = stats.Int64("processor_groupbytrace_spans_released", "Spans released to the next consumer", stats.UnitDimensionless)
 	mReleasedTraces      = stats.Int64("processor_groupbytrace_traces_released", "Traces released to the next consumer", stats.UnitDimensionless)
 	mIncompleteReleases  = stats.Int64("processor_groupbytrace_incomplete_releases", "Releases that are suspected to have been incomplete", stats.UnitDimensionless)
-	mDeDuplicatedTraces  = stats.Int64("processor_groupbytrace_deduplicated_traces", "Traces deduplicated by the processor", stats.UnitDimensionless)
-	mBypassedTraces      = stats.Int64("processor_groupbytrace_bypassed_traces", "Traces that bypassed the deduplication mechanisem", stats.UnitDimensionless)
-	mNumOfDistinctTraces = stats.Int64("processor_groupbytrace_distinct_traces", "Number of distinct traces", stats.UnitDimensionless)
+	mDeDuplicatedTraces  = stats.Int64("processor_groupbytrace_deduplicator_deduplicated_traces", "Traces deduplicated by the processor", stats.UnitDimensionless)
+	mFailedToHash        = stats.Int64("processor_groupbytrace_deduplicator_failed_to_hash", "Traces that failed to hash", stats.UnitDimensionless)
+	mBypassedTraces      = stats.Int64("processor_groupbytrace_deduplicator_bypassed_traces", "Traces that bypassed the deduplication mechanisem", stats.UnitDimensionless)
+	mNumOfDistinctTraces = stats.Int64("processor_groupbytrace_deduplicator_distinct_traces", "Number of distinct traces", stats.UnitDimensionless)
 	mEventLatency        = stats.Int64("processor_groupbytrace_event_latency", "How long the queue events are taking to be processed", stats.UnitMilliseconds)
 )
 
@@ -43,6 +44,12 @@ func MetricViews() []*view.View {
 			Measure:     mNumTracesConf,
 			Description: mNumTracesConf.Description(),
 			Aggregation: view.LastValue(),
+		},
+		{
+			Name:        obsreport.BuildProcessorCustomMetricName(string(typeStr), mFailedToHash.Name()),
+			Measure:     mFailedToHash,
+			Description: mFailedToHash.Description(),
+			Aggregation: view.Sum(),
 		},
 		{
 			Name:        obsreport.BuildProcessorCustomMetricName(string(typeStr), mDeDuplicatedTraces.Name()),

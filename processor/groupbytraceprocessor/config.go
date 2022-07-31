@@ -20,6 +20,14 @@ import (
 	"go.opentelemetry.io/collector/config"
 )
 
+// RoutingTableItem specifies how data should be routed to the different exporters
+type HashField struct {
+	// Value represents a possible value for the field specified under FromAttribute. Required.
+	Name string `mapstructure:"name"`
+
+	Required bool `mapstructure:"required"`
+}
+
 // Config is the configuration for the processor.
 type Config struct {
 	config.ProcessorSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct
@@ -51,4 +59,6 @@ type Config struct {
 	// Default: false.
 	// Not yet implemented, and an error will be returned when this option is used.
 	StoreOnDisk bool `mapstructure:"store_on_disk"`
+
+	Hashfields []HashField `mapstructure:"hash_field"`
 }
