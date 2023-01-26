@@ -31,11 +31,12 @@ const (
 	// The stability level of the processor.
 	stability = component.StabilityLevelBeta
 
-	defaultWaitDuration   = time.Second
-	defaultNumTraces      = 1_000_000
-	defaultNumWorkers     = 1
-	defaultDiscardOrphans = false
-	defaultStoreOnDisk    = false
+	defaultWaitDuration         = time.Second
+	defaultNumTraces            = 1_000_000
+	defaultDeDuplicationTimeout = time.Minute
+	defaultNumWorkers           = 1
+	defaultDiscardOrphans       = false
+	defaultStoreOnDisk          = false
 )
 
 var (
@@ -57,10 +58,11 @@ func NewFactory() component.ProcessorFactory {
 // createDefaultConfig creates the default configuration for the processor.
 func createDefaultConfig() config.Processor {
 	return &Config{
-		ProcessorSettings: config.NewProcessorSettings(config.NewComponentID(typeStr)),
-		NumTraces:         defaultNumTraces,
-		NumWorkers:        defaultNumWorkers,
-		WaitDuration:      defaultWaitDuration,
+		ProcessorSettings:    config.NewProcessorSettings(config.NewComponentID(typeStr)),
+		NumTraces:            defaultNumTraces,
+		DeduplicationTimeout: defaultDeDuplicationTimeout,
+		NumWorkers:           defaultNumWorkers,
+		WaitDuration:         defaultWaitDuration,
 
 		// not supported for now
 		DiscardOrphans: defaultDiscardOrphans,

@@ -20,6 +20,14 @@ import (
 	"go.opentelemetry.io/collector/config"
 )
 
+// RoutingTableItem specifies how data should be routed to the different exporters
+type HashField struct {
+	// Value represents a possible value for the field specified under FromAttribute. Required.
+	Name string `mapstructure:"name"`
+
+	Required bool `mapstructure:"required"`
+}
+
 // Config is the configuration for the processor.
 type Config struct {
 	config.ProcessorSettings `mapstructure:",squash"` // squash ensures fields are correctly decoded in embedded struct
@@ -31,6 +39,10 @@ type Config struct {
 	// NumWorkers is a number of workers processing event queue. Should be equal to physical processors number.
 	// Default: 1.
 	NumWorkers int `mapstructure:"num_workers"`
+
+	// Deduplicated trace timeout in seconds
+	// Default: 60
+	DeduplicationTimeout time.Duration `mapstructure:"deduplication_timeout"`
 
 	// WaitDuration tells the processor to wait for the specified duration for the trace to be complete.
 	// Default: 1s.
@@ -47,4 +59,6 @@ type Config struct {
 	// Default: false.
 	// Not yet implemented, and an error will be returned when this option is used.
 	StoreOnDisk bool `mapstructure:"store_on_disk"`
+
+	Hashfields []HashField `mapstructure:"hash_field"`
 }

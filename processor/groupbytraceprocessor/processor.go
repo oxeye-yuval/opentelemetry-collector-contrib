@@ -16,9 +16,14 @@ package groupbytraceprocessor // import "github.com/open-telemetry/opentelemetry
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
+	"sort"
 	"time"
 
+	"github.com/bluele/gcache"
+	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/batchpersignal"
 	"go.opencensus.io/stats"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/consumer"
@@ -26,9 +31,9 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-
-	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/batchpersignal"
 )
+
+type UInt64Set map[uint64]struct{}
 
 // groupByTraceProcessor is a processor that keeps traces in memory for a given duration, with the expectation
 // that the trace will be complete once this duration expires. After the duration, the trace is sent to the next consumer.
@@ -46,7 +51,7 @@ type groupByTraceProcessor struct {
 	nextConsumer consumer.Traces
 	config       Config
 	logger       *zap.Logger
-
+	traceUIDs    gcache.Cache
 	// the event machine handling all operations for this processor
 	eventMachine *eventMachine
 
@@ -61,14 +66,16 @@ const bufferSize = 10_000
 // newGroupByTraceProcessor returns a new processor.
 func newGroupByTraceProcessor(logger *zap.Logger, st storage, nextConsumer consumer.Traces, config Config) *groupByTraceProcessor {
 	// the event machine will buffer up to N concurrent events before blocking
-	eventMachine := newEventMachine(logger, 10000, config.NumWorkers, config.NumTraces)
+	eventMachine := newEventMachine(logger, bufferSize, config.NumWorkers, config.NumTraces)
 
+	traceUIDs := gcache.New(bufferSize).LRU().Build()
 	sp := &groupByTraceProcessor{
 		logger:       logger,
 		nextConsumer: nextConsumer,
 		config:       config,
 		eventMachine: eventMachine,
 		st:           st,
+		traceUIDs:    traceUIDs,
 	}
 
 	// register the callbacks
@@ -96,6 +103,10 @@ func (sp *groupByTraceProcessor) Capabilities() consumer.Capabilities {
 func (sp *groupByTraceProcessor) Start(context.Context, component.Host) error {
 	// start these metrics, as it might take a while for them to receive their first event
 	stats.Record(context.Background(), mTracesEvicted.M(0))
+	stats.Record(context.Background(), mFailedToHash.M(0))
+	stats.Record(context.Background(), mDeDuplicatedTraces.M(0))
+	stats.Record(context.Background(), mBypassedTraces.M(0))
+	stats.Record(context.Background(), mNumOfDistinctTraces.M(0))
 	stats.Record(context.Background(), mIncompleteReleases.M(0))
 	stats.Record(context.Background(), mNumTracesConf.M(int64(sp.config.NumTraces)))
 
@@ -119,6 +130,7 @@ func (sp *groupByTraceProcessor) onTraceReceived(trace tracesWithID, worker *eve
 			return fmt.Errorf("couldn't add spans to existing trace: %w", err)
 		}
 
+		//Check if span links, if so, mark trace as sendable and the dest also
 		// we are done with this trace, move on
 		return nil
 	}
@@ -174,6 +186,7 @@ func (sp *groupByTraceProcessor) onTraceExpired(traceID pcommon.TraceID, worker 
 
 	// delete from the map and erase its memory entry
 	worker.buffer.delete(traceID)
+	sp.st.setLinkedSpans(traceID)
 
 	// this might block, but we don't need to wait
 	sp.logger.Debug("marking the trace as released",
@@ -201,9 +214,11 @@ func (sp *groupByTraceProcessor) markAsReleased(traceID pcommon.TraceID, fire fu
 
 	// atomically fire the two events, so that a concurrent shutdown won't leave
 	// an orphaned trace in the storage
+	shouldSend := sp.st.getSendState(traceID)
 	fire(event{
-		typ:     traceReleased,
-		payload: trace,
+		typ: traceReleased,
+		// Traces
+		payload: SomeStruct{trace: trace, tid: traceID, shouldSend: shouldSend},
 	}, event{
 		typ:     traceRemoved,
 		payload: traceID,
@@ -211,23 +226,113 @@ func (sp *groupByTraceProcessor) markAsReleased(traceID pcommon.TraceID, fire fu
 	return nil
 }
 
-func (sp *groupByTraceProcessor) onTraceReleased(rss []ptrace.ResourceSpans) error {
+func extractField(fieldName string, resouceAttribute pcommon.Map, spanAttributes pcommon.Map) *string {
+	fieldValue, ok := resouceAttribute.Get(fieldName)
+	if !ok {
+		fieldValue, ok = spanAttributes.Get(fieldName)
+		if !ok {
+			return nil
+		}
+	}
+	val := fieldValue.StringVal()
+	return &val
+}
+
+func (sp *groupByTraceProcessor) generateTraceUID(trace ptrace.Traces) ([]uint64, bool) {
+	vss := trace.ResourceSpans()
+	trace_uids := make([]uint64, trace.SpanCount())
+	var span_counter int = 0
+	for i := 0; i < vss.Len(); i++ {
+		rs := vss.At(i)
+		ilss := rs.ScopeSpans()
+		for j := 0; j < ilss.Len(); j++ {
+			for g := 0; g < ilss.At(j).Spans().Len(); g++ {
+				operation := ilss.At(j).Spans().At(g).Name()
+				h := fnv.New64a()
+				h.Write([]byte(operation))
+
+				resource_attributes := rs.Resource().Attributes()
+				span_attributes := ilss.At(j).Spans().At(g).Attributes()
+
+				for p := 0; p < len(sp.config.Hashfields); p++ {
+					fieldValue := extractField(
+						sp.config.Hashfields[p].Name,
+						resource_attributes,
+						span_attributes,
+					)
+
+					if sp.config.Hashfields[p].Required && fieldValue == nil {
+						stats.Record(context.Background(), mFailedToHash.M(1))
+						return nil, false
+					}
+					if fieldValue == nil {
+						continue
+					}
+
+					h.Write([]byte(*fieldValue))
+				}
+				trace_uids[span_counter] = h.Sum64()
+				span_counter++
+			}
+		}
+	}
+	return trace_uids, true
+}
+
+func (sp *groupByTraceProcessor) isDuplicate(trace ptrace.Traces) bool {
+	trace_uids, ok := sp.generateTraceUID(trace)
+	if !ok {
+		// Consider returning error value to make it explicit
+		return false
+	}
+
+	sort.Slice(trace_uids, func(i, j int) bool { return trace_uids[i] < trace_uids[j] })
+	uid := make([]byte, 8*trace.SpanCount())
+
+	for i := 0; i < len(trace_uids); i++ {
+		binary.LittleEndian.PutUint64(uid[i*8:], trace_uids[i])
+	}
+
+	uid = uid[0:]
+	h := fnv.New64()
+	h.Write(uid)
+	trace_uid := h.Sum64()
+
+	_, err := sp.traceUIDs.Get(trace_uid)
+	if err == nil {
+		stats.Record(context.Background(), mDeDuplicatedTraces.M(1))
+		return true
+	}
+
+	stats.Record(context.Background(), mNumOfDistinctTraces.M(1))
+	sp.traceUIDs.SetWithExpire(trace_uid, struct{}{}, sp.config.DeduplicationTimeout)
+	return false
+}
+
+func (sp *groupByTraceProcessor) onTraceReleased(rss []ptrace.ResourceSpans, traceID pcommon.TraceID, shouldSend bool) error {
 	trace := ptrace.NewTraces()
 	for _, rs := range rss {
 		trs := trace.ResourceSpans().AppendEmpty()
 		rs.CopyTo(trs)
 	}
+
 	stats.Record(context.Background(),
 		mReleasedSpans.M(int64(trace.SpanCount())),
 		mReleasedTraces.M(1),
 	)
 
-	// Do async consuming not to block event worker
-	go func() {
-		if err := sp.nextConsumer.ConsumeTraces(context.Background(), trace); err != nil {
-			sp.logger.Error("consume failed", zap.Error(err))
-		}
-	}()
+	if shouldSend {
+		stats.Record(context.Background(), mBypassedTraces.M(1))
+	}
+
+	if shouldSend || !sp.isDuplicate(trace) {
+		// Do async consuming not to block event worker
+		go func() {
+			if err := sp.nextConsumer.ConsumeTraces(context.Background(), trace); err != nil {
+				sp.logger.Error("consume failed", zap.Error(err))
+			}
+		}()
+	}
 	return nil
 }
 
