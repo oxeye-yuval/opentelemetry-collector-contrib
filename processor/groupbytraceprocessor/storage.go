@@ -31,6 +31,11 @@ type storage interface {
 	// cannot be found
 	get(pcommon.TraceID) ([]ptrace.ResourceSpans, error)
 
+	setLinkedSpans(pcommon.TraceID) error
+
+	getSendState(pcommon.TraceID) bool
+	setSendState(pcommon.TraceID, bool) bool
+
 	// delete will remove the trace based on the given trace ID, returning the trace that was removed,
 	// or nil in case a trace cannot be found
 	delete(pcommon.TraceID) ([]ptrace.ResourceSpans, error)

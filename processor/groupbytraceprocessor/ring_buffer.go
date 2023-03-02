@@ -14,22 +14,26 @@
 
 package groupbytraceprocessor // import "github.com/open-telemetry/opentelemetry-collector-contrib/processor/groupbytraceprocessor"
 
-import "go.opentelemetry.io/collector/pdata/pcommon"
+import (
+	"go.opentelemetry.io/collector/pdata/pcommon"
+)
 
 // ringBuffer keeps an in-memory bounded buffer with the in-flight trace IDs
 type ringBuffer struct {
-	index     int
-	size      int
-	ids       []pcommon.TraceID
-	idToIndex map[pcommon.TraceID]int // key is traceID, value is the index on the 'ids' slice
+	index          int
+	size           int
+	ids            []pcommon.TraceID
+	idToIndex      map[pcommon.TraceID]int // key is traceID, value is the index on the 'ids' slice
+	idToShouldSend map[int]bool
 }
 
 func newRingBuffer(size int) *ringBuffer {
 	return &ringBuffer{
-		index:     -1, // the first span to be received will be placed at position '0'
-		size:      size,
-		ids:       make([]pcommon.TraceID, size),
-		idToIndex: make(map[pcommon.TraceID]int),
+		index:          -1, // the first span to be received will be placed at position '0'
+		size:           size,
+		ids:            make([]pcommon.TraceID, size),
+		idToIndex:      make(map[pcommon.TraceID]int),
+		idToShouldSend: make(map[int]bool),
 	}
 }
 
@@ -48,8 +52,32 @@ func (r *ringBuffer) put(traceID pcommon.TraceID) pcommon.TraceID {
 	// place the traceID in memory
 	r.ids[r.index] = traceID
 	r.idToIndex[traceID] = r.index
+	r.idToShouldSend[r.index] = false
 
 	return evicted
+}
+
+func (r *ringBuffer) setSendingState(traceID pcommon.TraceID, sendState bool) {
+	location, found := r.idToIndex[traceID]
+	if !found {
+		return
+	}
+
+	r.idToShouldSend[location] = sendState
+}
+
+func (r *ringBuffer) shouldSend(traceID pcommon.TraceID) bool {
+	location, found := r.idToIndex[traceID]
+	if !found {
+		return false
+	}
+
+	shouldSend, found := r.idToShouldSend[location]
+	if !found {
+		return false
+	}
+
+	return shouldSend
 }
 
 func (r *ringBuffer) contains(traceID pcommon.TraceID) bool {
