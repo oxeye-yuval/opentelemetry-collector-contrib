@@ -3,14 +3,9 @@ name: Docker-Build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
-  workflow_run:
-    workflows: ["Release"]
-    branches: [main]
-    types: 
-      - completed
-  workflow_dispatch:
 permissions:
   id-token: write
   contents: read
