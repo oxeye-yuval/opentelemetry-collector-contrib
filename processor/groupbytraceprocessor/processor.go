@@ -18,11 +18,13 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/go-redis/cache/v9"
+	"github.com/redis/go-redis/v9"
 	"hash/fnv"
 	"sort"
+	"strconv"
 	"time"
 
-	"github.com/bluele/gcache"
 	"github.com/open-telemetry/opentelemetry-collector-contrib/pkg/batchpersignal"
 	"go.opencensus.io/stats"
 	"go.opentelemetry.io/collector/component"
@@ -51,7 +53,7 @@ type groupByTraceProcessor struct {
 	nextConsumer consumer.Traces
 	config       Config
 	logger       *zap.Logger
-	traceUIDs    gcache.Cache
+	traceUIDs    *cache.Cache
 	// the event machine handling all operations for this processor
 	eventMachine *eventMachine
 
@@ -62,13 +64,26 @@ type groupByTraceProcessor struct {
 var _ component.TracesProcessor = (*groupByTraceProcessor)(nil)
 
 const bufferSize = 10_000
+const cachePrefix = "dedup-trace-uid:"
 
 // newGroupByTraceProcessor returns a new processor.
-func newGroupByTraceProcessor(logger *zap.Logger, st storage, nextConsumer consumer.Traces, config Config) *groupByTraceProcessor {
+func newGroupByTraceProcessor(logger *zap.Logger, st storage, redisClient *redis.Client, nextConsumer consumer.Traces, config Config) *groupByTraceProcessor {
 	// the event machine will buffer up to N concurrent events before blocking
 	eventMachine := newEventMachine(logger, bufferSize, config.NumWorkers, config.NumTraces)
 
-	traceUIDs := gcache.New(bufferSize).LRU().Build()
+	var traceUIDs *cache.Cache
+	if config.StoreOnRedis && redisClient != nil {
+		logger.Info("Creating redis cache")
+		traceUIDs = cache.New(&cache.Options{
+			Redis: redisClient,
+		})
+	} else {
+		logger.Info("Creating local cache")
+		traceUIDs = cache.New(&cache.Options{
+			LocalCache: cache.NewTinyLFU(bufferSize, config.DeduplicationTimeout),
+		})
+	}
+
 	sp := &groupByTraceProcessor{
 		logger:       logger,
 		nextConsumer: nextConsumer,
@@ -280,36 +295,47 @@ func (sp *groupByTraceProcessor) generateTraceUID(trace ptrace.Traces) ([]uint64
 }
 
 func (sp *groupByTraceProcessor) isDuplicate(trace ptrace.Traces) bool {
-	trace_uids, ok := sp.generateTraceUID(trace)
+	traceUids, ok := sp.generateTraceUID(trace)
 	if !ok {
 		// Consider returning error value to make it explicit
 		return false
 	}
 
-	sort.Slice(trace_uids, func(i, j int) bool { return trace_uids[i] < trace_uids[j] })
+	sort.Slice(traceUids, func(i, j int) bool { return traceUids[i] < traceUids[j] })
 	uid := make([]byte, 8*trace.SpanCount())
 
-	for i := 0; i < len(trace_uids); i++ {
-		binary.LittleEndian.PutUint64(uid[i*8:], trace_uids[i])
+	for i := 0; i < len(traceUids); i++ {
+		binary.LittleEndian.PutUint64(uid[i*8:], traceUids[i])
 	}
 
 	uid = uid[0:]
 	h := fnv.New64()
 	h.Write(uid)
-	trace_uid := h.Sum64()
+	traceUid := h.Sum64()
 
-	_, err := sp.traceUIDs.Get(trace_uid)
+	err := sp.traceUIDs.Get(context.Background(), cachePrefix+strconv.FormatUint(traceUid, 10), nil)
 	if err == nil {
 		stats.Record(context.Background(), mDeDuplicatedTraces.M(1))
+		sp.logger.Debug("Trace is duplicate")
 		return true
 	}
 
 	stats.Record(context.Background(), mNumOfDistinctTraces.M(1))
-	sp.traceUIDs.SetWithExpire(trace_uid, struct{}{}, sp.config.DeduplicationTimeout)
+	sp.traceUIDs.Set(&cache.Item{
+		Ctx:   context.Background(),
+		Key:   cachePrefix + strconv.FormatUint(traceUid, 10),
+		Value: struct{}{},
+		TTL:   sp.config.DeduplicationTimeout,
+	})
+	sp.logger.Debug("Trace isn't duplicate")
 	return false
 }
 
 func (sp *groupByTraceProcessor) onTraceReleased(rss []ptrace.ResourceSpans, traceID pcommon.TraceID, shouldSend bool) error {
+	sp.logger.Debug("onTraceReleased",
+		zap.String("traceID", traceID.HexString()),
+		zap.Bool("ShouldSend", shouldSend))
+
 	trace := ptrace.NewTraces()
 	for _, rs := range rss {
 		trs := trace.ResourceSpans().AppendEmpty()
@@ -337,6 +363,8 @@ func (sp *groupByTraceProcessor) onTraceReleased(rss []ptrace.ResourceSpans, tra
 }
 
 func (sp *groupByTraceProcessor) onTraceRemoved(traceID pcommon.TraceID) error {
+	sp.logger.Debug("onTraceRemoved", zap.String("traceID", traceID.HexString()))
+
 	trace, err := sp.st.delete(traceID)
 	if err != nil {
 		return fmt.Errorf("couldn't delete trace %q from the storage: %w", traceID.HexString(), err)

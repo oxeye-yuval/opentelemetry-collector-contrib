@@ -13,7 +13,6 @@
 // limitations under the License.
 
 package redisreceiver // import "github.com/open-telemetry/opentelemetry-collector-contrib/receiver/redisreceiver"
-
 import (
 	"github.com/go-redis/redis/v7"
 )

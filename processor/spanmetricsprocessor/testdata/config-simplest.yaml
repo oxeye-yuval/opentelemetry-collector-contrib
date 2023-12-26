@@ -14,14 +14,13 @@ receivers:
 
 exporters:
   jaeger:
-    endpoint: "localhost:14250"
+    endpoint: "jaeger:14250"
     tls:
       insecure: true
 
 processors:
-  # groupbytrace:
   groupbytrace:
-    deduplication_timeout: 8760h
+    deduplication_timeout: 60s
     wait_duration: 10s
     num_traces: 20000
     hash_field:
@@ -35,6 +34,9 @@ processors:
         required: true
       - name: "oxeye.call_stack"
         required: false
+    store_on_redis: true
+    redis_address: "redis:6379"
+    redis_password: ""
 
 
 service:

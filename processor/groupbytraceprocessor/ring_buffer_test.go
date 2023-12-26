@@ -44,7 +44,7 @@ func TestRingBufferCapacity(t *testing.T) {
 		assert.True(t, buffer.contains(traceID))
 	}
 
-	// the first trace should have been evicted
+	// the first Trace should have been evicted
 	assert.False(t, buffer.contains(traceIDs[0]))
 }
 

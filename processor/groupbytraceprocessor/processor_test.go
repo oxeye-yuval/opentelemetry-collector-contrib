@@ -36,7 +36,7 @@ func TestTraceIsDispatchedAfterDuration(t *testing.T) {
 	// prepare
 	traces := simpleTraces()
 
-	wgReceived := &sync.WaitGroup{} // we wait for the next (mock) processor to receive the trace
+	wgReceived := &sync.WaitGroup{} // we wait for the next (mock) processor to receive the Trace
 	config := Config{
 		WaitDuration: time.Nanosecond,
 		NumTraces:    10,
@@ -50,7 +50,7 @@ func TestTraceIsDispatchedAfterDuration(t *testing.T) {
 		},
 	}
 
-	wgDeleted := &sync.WaitGroup{} // we wait for the next (mock) processor to receive the trace
+	wgDeleted := &sync.WaitGroup{} // we wait for the next (mock) processor to receive the Trace
 	backing := newMemoryStorage()
 	st := &mockStorage{
 		onCreateOrAppend: backing.createOrAppend,
@@ -80,7 +80,7 @@ func TestTraceIsDispatchedAfterDuration(t *testing.T) {
 
 func TestInternalCacheLimit(t *testing.T) {
 	// prepare
-	wg := &sync.WaitGroup{} // we wait for the next (mock) processor to receive the trace
+	wg := &sync.WaitGroup{} // we wait for the next (mock) processor to receive the Trace
 
 	config := Config{
 		// should be long enough for the test to run without traces being finished, but short enough to not
@@ -140,7 +140,7 @@ func TestInternalCacheLimit(t *testing.T) {
 		assert.Contains(t, receivedTraceIDs, traceID)
 	}
 
-	// the first trace should have been evicted
+	// the first Trace should have been evicted
 	assert.NotContains(t, receivedTraceIDs, traceIDs[0])
 }
 
@@ -385,7 +385,7 @@ func TestTraceErrorFromStorageWhileProcessingSecondTrace(t *testing.T) {
 		return expectedError
 	}
 
-	// processing another batch for the same trace takes a slightly different code path
+	// processing another batch for the same Trace takes a slightly different code path
 	err = p.onTraceReceived(tracesWithID{id: traceID, td: batch[0]},
 		p.eventMachine.workers[workerIndexForTraceID(traceID, config.NumWorkers)],
 	)
@@ -459,7 +459,7 @@ func TestTracesAreDispatchedInIndividualBatches(t *testing.T) {
 	st := newMemoryStorage()
 	next := &mockProcessor{
 		onTraces: func(_ context.Context, traces ptrace.Traces) error {
-			// we should receive two batches, each one with one trace
+			// we should receive two batches, each one with one Trace
 			assert.Equal(t, 1, traces.ResourceSpans().Len())
 			wg.Done()
 			return nil
@@ -564,7 +564,7 @@ func BenchmarkConsumeTracesCompleteOnFirstBatch(b *testing.B) {
 	}
 	st := newMemoryStorage()
 
-	// For each input trace there are always <= 2 events in the machine simultaneously.
+	// For each input Trace there are always <= 2 events in the machine simultaneously.
 	semaphoreCh := make(chan struct{}, bufferSize/2)
 	next := &mockProcessor{onTraces: func(context.Context, ptrace.Traces) error {
 		<-semaphoreCh

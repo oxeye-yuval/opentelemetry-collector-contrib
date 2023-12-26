@@ -17,6 +17,7 @@ package groupbytraceprocessor // import "github.com/open-telemetry/opentelemetry
 import (
 	"context"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"time"
 
 	"go.opencensus.io/stats/view"
@@ -37,6 +38,9 @@ const (
 	defaultNumWorkers           = 1
 	defaultDiscardOrphans       = false
 	defaultStoreOnDisk          = false
+	defaultStoreOnRedis         = false
+	defaultRedisAddress         = "127.0.0.1:6379"
+	defaultRedisPassword        = ""
 )
 
 var (
@@ -64,6 +68,10 @@ func createDefaultConfig() config.Processor {
 		NumWorkers:           defaultNumWorkers,
 		WaitDuration:         defaultWaitDuration,
 
+		StoreOnRedis:  defaultStoreOnRedis,
+		RedisAddress:  defaultRedisAddress,
+		RedisPassword: defaultRedisPassword,
+
 		// not supported for now
 		DiscardOrphans: defaultDiscardOrphans,
 		StoreOnDisk:    defaultStoreOnDisk,
@@ -76,10 +84,11 @@ func createTracesProcessor(
 	params component.ProcessorCreateSettings,
 	cfg config.Processor,
 	nextConsumer consumer.Traces) (component.TracesProcessor, error) {
-
 	oCfg := cfg.(*Config)
 
 	var st storage
+	var redisClient *redis.Client
+
 	if oCfg.StoreOnDisk {
 		return nil, errDiskStorageNotSupported
 	}
@@ -87,8 +96,18 @@ func createTracesProcessor(
 		return nil, errDiscardOrphansNotSupported
 	}
 
-	// the only supported storage for now
-	st = newMemoryStorage()
+	if oCfg.StoreOnRedis {
+		redisClient = redis.NewClient(
+			&redis.Options{
+				Addr:     oCfg.RedisAddress,
+				Password: oCfg.RedisPassword,
+			})
+		st = newRedisStorage(params.Logger, redisClient)
+		params.Logger.Info("Connected to redis")
+	} else {
+		redisClient = nil
+		st = newMemoryStorage()
+	}
 
-	return newGroupByTraceProcessor(params.Logger, st, nextConsumer, *oCfg), nil
+	return newGroupByTraceProcessor(params.Logger, st, redisClient, nextConsumer, *oCfg), nil
 }

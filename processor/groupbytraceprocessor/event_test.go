@@ -66,7 +66,7 @@ func TestEventCallback(t *testing.T) {
 			typ:      traceReleased,
 			payload:  []ptrace.ResourceSpans{},
 			registerCallback: func(em *eventMachine, wg *sync.WaitGroup) {
-				em.onTraceReleased = func(expired []ptrace.ResourceSpans) error {
+				em.onTraceReleased = func(expired []ptrace.ResourceSpans, traceId pcommon.TraceID, shouldSend bool) error {
 					wg.Done()
 					return nil
 				}
@@ -185,7 +185,7 @@ func TestEventInvalidPayload(t *testing.T) {
 			casename: "onTraceReleased",
 			typ:      traceReleased,
 			registerCallback: func(em *eventMachine, wg *sync.WaitGroup) {
-				em.onTraceReleased = func(released []ptrace.ResourceSpans) error {
+				em.onTraceReleased = func(released []ptrace.ResourceSpans, traceId pcommon.TraceID, shouldSend bool) error {
 					return nil
 				}
 			},
